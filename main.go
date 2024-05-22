@@ -1,172 +1,151 @@
 package main
 
 import (
-	"fmt"
 	"time"
-	"image/color"
-)
 
-import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
-	"fyne.io/fyne/v2/canvas"
-    "fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/layout"
-)
 
-const(GAME_SIZE = 25)
-type cellState int
+	"my_module/utils"
+	"my_module/gui"
+)
 
 const (
 	black cellState = iota
 	white
 )
 
-type cell struct {
-	state cellState
-}
+type cellState int
 
-func in_range(row int, col int, tab * gameGrid) bool{
-	return row >= 0 && row < len(tab) && col >= 0 && col < len(tab[0])
-}
+type gameState map[utils.Position]struct{}
 
-func nb_neighbours(row int, col int, tab * gameGrid) int{
+func neighboursNb(pos utils.Position, game *gameState) int{
 	neighbours := 0
-	for i := row-1; i <= row + 1; i++ {
-		for j := col-1; j <= col + 1; j++ {
-			if in_range(i, j, tab) && tab[i][j].state == white {
+	for i := -1; i <= 1; i++ {
+		for j := -1; j <= 1; j++ {
+			if i == 0 && j == 0 {
+				continue
+			}
+			if _, exists := (*game)[utils.Position{X: pos.X + i, Y: pos.Y + j}]; exists{
 				neighbours += 1
 			}
 		}
 	}
-	if tab[row][col].state == white {
-		neighbours -= 1;
-	}
 	return neighbours
 }
 
-func nb_neighbours_tab(tab * gameGrid) neighbours_grid{
-	var neighbours_tab [len(tab)][len(tab[0])]int
-	for i, row := range neighbours_tab {
-		for j := range row{
-			neighbours_tab[i][j] = nb_neighbours(i, j, tab)
-		}
-	}
-	return neighbours_tab
-}
-
-
-func new_cell_state(currentState cellState, nb_neighbours int) cellState{
+func newCellState(currentState cellState, neighboursNb int) cellState{
 	if currentState == white {
-		if nb_neighbours == 2 || nb_neighbours == 3 {
+		if neighboursNb == 2 || neighboursNb == 3 {
 			return white
 		}
 		return black
 	} else {
-		if nb_neighbours == 3 {
+		if neighboursNb == 3 {
 			return white
 		}
 		return black
 	}
 }
 
-func update_states(tab * gameGrid) {
-	neighbours_tab := nb_neighbours_tab(tab)
-	for i, row := range tab {
-		for j := range row {
-			tab[i][j].state = new_cell_state(tab[i][j].state, neighbours_tab[i][j])
+//room for improvement here
+func updateStates(game * gameState) *[]utils.Position {
+	newGame := make(map[utils.Position]struct{})
+	updatePos := make([]utils.Position, 0)
+	alreadyUpdated := make(map[utils.Position]struct{})
+	for pos := range *game {
+		for posX := pos.X - 1 ; posX <= pos.X + 1; posX++ {
+			for posY := pos.Y - 1; posY <= pos.Y + 1; posY++ {
+				currentPos := utils.Position{X: posX, Y: posY}
+				if _, updated := alreadyUpdated[currentPos]; updated {
+					continue
+				}
+				neighbours := neighboursNb(currentPos, game)
+				_, exists := (*game)[currentPos]
+				var currentState cellState
+				if exists {
+					currentState = white
+				} else {
+					currentState = black
+				}
+				newState := newCellState(currentState, neighbours)
+				if newState == white {
+					newGame[currentPos] = struct{}{}
+				}
+				if newState != currentState {
+					updatePos = append(updatePos, currentPos)
+				}
+				alreadyUpdated[currentPos] = struct{}{}
+			}
 		}
 	}
+	*game = newGame
+	return &updatePos
 }
 
-func (c *cell) String() string {
-	if c.state == black {
-		return "@"
-	} else if c.state == white {
-		return " "
-	}
-	return "ERROR"
-}
-
-type gameGrid [GAME_SIZE][GAME_SIZE]cell
-type neighbours_grid [GAME_SIZE][GAME_SIZE]int
 
 func main() {
 	a := app.New()
 	w := a.NewWindow("Go of Life")
 
-	w.Resize(fyne.NewSize(200, 200)) //useless
+	w.Resize(fyne.NewSize(400, 400)) //useless
 
-	grid := initGrid()
-	container, cells := init_grid()
-	w.SetContent(container)
-
+	gameState := initGame()
+	widget := gui.NewGridWidget()
+	w.SetContent(widget)
 	go func() {
-		for range time.Tick(200 * time.Millisecond) {
-			update_states(&grid)
-			draw(&grid, &cells)
-			container.Refresh()
+		time.Sleep(400 * time.Millisecond)
+		for pos := range gameState {
+			widget.UpdatePos = append(widget.UpdatePos, pos)
 		}
+		widget.Refresh()
+		for range time.Tick(500 * time.Millisecond) {
+			updatePos := updateStates(&gameState)
+			widget.UpdatePos = append(widget.UpdatePos, *updatePos...)
+			widget.Refresh()
+		}
+		widget.Refresh()
 	}()
+
 	w.Show()
 	a.Run()
 }
 
-func draw(grid * gameGrid, cells *[][]*canvas.Rectangle){
-	for i, rows := range grid {
-		for j := range rows {
-			var cell_color color.Color
-			if grid[i][j].state == black {
-				cell_color = color.Black
-			} else if grid[i][j].state == white {
-				cell_color = color.White
-			}
-			(*cells)[i][j].FillColor = cell_color
-		}
-	}
-}
+func initGame() gameState {
+	grid := make(map[utils.Position]struct{})
 
-func init_grid() (*fyne.Container,  [][]*canvas.Rectangle) {
-	cells := make([][]*canvas.Rectangle, GAME_SIZE)
-	container := container.New(layout.NewGridLayout(GAME_SIZE))
-	for i := 0; i < GAME_SIZE; i++{
-		for j := 0; j < GAME_SIZE; j++{
-			cell := canvas.NewRectangle(color.White)
-			cell.SetMinSize(fyne.NewSize(25, 25))
-			cells[i] = append(cells[i], cell)
-			container.Add(cell)
-		}
-	}
-	return container, cells
-}
-
-func initGrid() gameGrid {
-	var grid gameGrid
-
-	// a glider
-	grid[0][1].state = white
-	grid[1][2].state = white
-	grid[2][0].state = white
-	grid[2][1].state = white
-	grid[2][2].state = white
-	
-	// a blinker
-	grid[20][20].state = white
-	grid[20][21].state = white
-	grid[20][22].state = white
-
-
+	//a simple blinker:
+	grid[utils.Position{X: 1, Y: 1}] = struct{}{}
+	grid[utils.Position{X: 1, Y: 2}] = struct{}{}
+	grid[utils.Position{X: 1, Y: 3}] = struct{}{}
 	return grid
-}
+	
+	//a simple glider:
+	grid[utils.Position{X: 1, Y: 1}] = struct{}{}
+	grid[utils.Position{X: 2, Y: 2}] = struct{}{}
+	grid[utils.Position{X: 2, Y: 3}] = struct{}{}
+	grid[utils.Position{X: 1, Y: 3}] = struct{}{}
+	grid[utils.Position{X: 3, Y: 3}] = struct{}{}
+	return grid
 
-func printGrid(grid gameGrid) {
-	str := ""
-	for _, row := range grid {
-		rowStr := ""
-		for _, c := range row {
-			rowStr += c.String()
-		}
-		str += rowStr+ "\n"
-	}
-	fmt.Println(str)
+	//a blinker with 15 states
+	grid[utils.Position{X: 3, Y: 5}] = struct{}{}
+	grid[utils.Position{X: 4, Y: 4}] = struct{}{}
+	grid[utils.Position{X: 4, Y: 5}] = struct{}{}
+	grid[utils.Position{X: 4, Y: 6}] = struct{}{}
+	grid[utils.Position{X: 7, Y: 4}] = struct{}{}
+	grid[utils.Position{X: 7, Y: 5}] = struct{}{}
+	grid[utils.Position{X: 7, Y: 6}] = struct{}{}
+	grid[utils.Position{X: 9, Y: 4}] = struct{}{}
+	grid[utils.Position{X: 9, Y: 6}] = struct{}{}
+	grid[utils.Position{X: 10, Y: 4}] = struct{}{}
+	grid[utils.Position{X: 10, Y: 6}] = struct{}{}
+	grid[utils.Position{X: 12, Y: 4}] = struct{}{}
+	grid[utils.Position{X: 12, Y: 5}] = struct{}{}
+	grid[utils.Position{X: 12, Y: 6}] = struct{}{}
+	grid[utils.Position{X: 15, Y: 4}] = struct{}{}
+	grid[utils.Position{X: 15, Y: 5}] = struct{}{}
+	grid[utils.Position{X: 15, Y: 6}] = struct{}{}
+	grid[utils.Position{X: 16, Y: 5}] = struct{}{}
+	return grid
 }
