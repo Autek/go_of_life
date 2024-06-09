@@ -1,9 +1,7 @@
 package gui
 
 import(
-	"my_module/utils"
-
-	"math"
+	"my_module/backend"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/widget"
@@ -13,27 +11,49 @@ import(
 
 type GridWidget struct {
 	widget.BaseWidget
-	ScaleFactor float32
-	CellsState map[utils.Position]struct{}
-	UpdatePos []utils.Position
+	Zoom float32
+	Grid []cellState
 }
+
+type cellState bool
 
 type GridWidgetRenderer struct {
 	Widget *GridWidget
 	Cells []fyne.CanvasObject
 }
 
+func (widget *GridWidget) Update(to_update *[]backend.Position){
+	for _, pos := range *to_update {
+		index := positionToIndex(pos)
+		if widget.Grid[index] == true {
+			widget.Grid[index] = false
+		} else {
+			widget.Grid[index] = true
+		}
+	}
+}
+
+func (widget *GridWidget) Scrolled(ev *fyne.ScrollEvent){
+	scaleFactor := float32(1.1)
+	if ev.Scrolled.DY > 0 {
+		widget.Zoom *= scaleFactor
+	} else {
+		widget.Zoom /= scaleFactor
+	}
+	widget.Refresh()
+}
+
 func NewGridWidget() *GridWidget {
-	item := &GridWidget{ScaleFactor: 50, CellsState: make(map[utils.Position]struct{}), UpdatePos: make([]utils.Position, 0)}
+	item := &GridWidget{Zoom: 50, Grid: make([]cellState, 100 * 100)}
 	item.ExtendBaseWidget(item)
 	return item
 }
 
 func (widget *GridWidget) CreateRenderer() fyne.WidgetRenderer {
-	cells := make([]fyne.CanvasObject, 0, len(widget.CellsState))
-	for _ = range widget.CellsState {
-		rect := canvas.NewRectangle(color.White)
-		rect.Resize(fyne.NewSize(widget.ScaleFactor, widget.ScaleFactor))
+	cells := make([]fyne.CanvasObject, 0, len(widget.Grid))
+	for i:= 0; i < len(widget.Grid); i++{
+		rect := canvas.NewRectangle(color.Black)
+		rect.Resize(fyne.NewSize(widget.Zoom, widget.Zoom))
 		cells = append(cells, rect)
 	}
 	return &GridWidgetRenderer{Widget: widget, Cells: cells}
@@ -41,10 +61,9 @@ func (widget *GridWidget) CreateRenderer() fyne.WidgetRenderer {
 
 func (renderer *GridWidgetRenderer) Layout(size fyne.Size) {
 	for i := range renderer.Cells {
-		scaleFactor := renderer.Widget.ScaleFactor
-		pos := utils.IndexToPosition(i, int(math.Ceil(float64(size.Width / scaleFactor))))
-
-		renderer.Cells[i].Move(fyne.NewPos(float32(pos.X) * scaleFactor, float32(pos.Y) * scaleFactor))
+		zoom := renderer.Widget.Zoom
+		pos := indexToPosition(i)
+		renderer.Cells[i].Move(fyne.NewPos(float32(pos.X) * zoom, float32(pos.Y) * zoom))
 	}
 }
 
@@ -53,40 +72,29 @@ func (renderer *GridWidgetRenderer) MinSize() fyne.Size {
 }
 
 func (renderer *GridWidgetRenderer) Refresh() {
-	for _, position := range renderer.Widget.UpdatePos {
-		columns := int(math.Ceil(float64(renderer.Widget.Size().Width / renderer.Widget.ScaleFactor)))
-		cell_index := utils.PositionToIndex(position, columns)
-		if !utils.InRange(cell_index, len(renderer.Cells)) { // the index is out of the drawing bounds
-			continue
-		}
-		cell := renderer.Objects()[cell_index].(*canvas.Rectangle)
-		if cell.FillColor == color.White {
+	layout := false
+	for i := range renderer.Cells {
+		cell := renderer.Cells[i].(*canvas.Rectangle)
+		if cell.FillColor == color.White && !renderer.Widget.Grid[i] {
 			cell.FillColor = color.Black
-			delete(renderer.Widget.CellsState, position)
-
-		} else if cell.FillColor == color.Black {
-			renderer.Widget.CellsState[position] = struct{}{}
+			cell.Refresh()
+		} else if cell.FillColor == color.Black && renderer.Widget.Grid[i] {
 			cell.FillColor = color.White
+			cell.Refresh()
 		}
-		cell.Refresh()
+		zoom := renderer.Widget.Zoom
+		if cell.Size().Width != zoom {
+			cell.Resize(fyne.NewSize(zoom, zoom))
+			cell.Refresh()
+			layout = true
+		}
 	}
-	renderer.Widget.UpdatePos = renderer.Widget.UpdatePos[:0]
+	if layout {
+		renderer.Layout(renderer.Widget.Size())
+	}
 }
 
 func (renderer *GridWidgetRenderer) Objects() []fyne.CanvasObject {
-	scaleFactor := renderer.Widget.ScaleFactor
-	columns := int(math.Ceil(float64(renderer.Widget.Size().Width / scaleFactor)))
-	rows := int(math.Ceil(float64(renderer.Widget.Size().Height / scaleFactor)))
-	cellsNb := rows * columns
-	if len(renderer.Cells) < cellsNb {
-		for len(renderer.Cells) < cellsNb {
-			c := canvas.NewRectangle(color.Black)
-			c.Resize(fyne.NewSize(scaleFactor, scaleFactor))
-			renderer.Cells = append(renderer.Cells, c)
-		}
-	} else if len(renderer.Cells) > cellsNb {
-		renderer.Cells = renderer.Cells[:cellsNb]
-	}
 	return renderer.Cells
 }
 
@@ -94,3 +102,20 @@ func (renderer *GridWidgetRenderer) Destroy() {
 	//nothing to do
 }
 
+func indexToPosition(i int) backend.Position {
+	x := i % 100
+	y := i / 100
+	return backend.Position{X: x, Y: y}
+}
+
+func positionToIndex(pos backend.Position) int {
+	return pos.Y * 100 + pos.X
+}
+
+func inRange(i int, length int) bool {
+	return i >= 0 && i < length
+}
+
+func inRange2D(pos backend.Position, width int, height int) bool {
+	return inRange(pos.X, width) && inRange(pos.Y, height)
+}
